@@ -1,111 +1,186 @@
-import React, { ChangeEvent, FormEvent, useState } from 'react';
+import React, { ChangeEvent, FormEvent, useEffect, useState, useCallback } from 'react';
 
 import { Modal } from '../Modal';
 
 import './styles.less';
 
-type ImageCard = {
-  id: string,
-  imageUrl: string,
-  tag: string,
-}
+import { ImageCard } from '../../types';
 
 type SearchingProps = {
-  onSetImageCards: (tags: ImageCard[]) => void,
+  onSetImageCards: (tags: ImageCard) => void;
   onClearImageCards: () => void;
-}
+  onSetIsGroup: () => void;
+  tag: string;
+  isGrouped: boolean;
+};
 
-type CloseHandler = (event: React.MouseEvent<HTMLDivElement, MouseEvent>) => void
+type FetchImageHandler = (APIKey: string, tags: string[]) => void;
 
-export const Searching: React.FC<SearchingProps> = ({ onSetImageCards, onClearImageCards }) => {
+type CloseHandler = (event: React.MouseEvent<HTMLElement, MouseEvent>) => void;
+
+export const Searching: React.FC<SearchingProps> = ({
+  onSetImageCards,
+  onClearImageCards,
+  onSetIsGroup,
+  tag,
+  isGrouped,
+}) => {
   const [inputValue, setInputValue] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [modalMessage, setModalMessage] = useState('');
+  const [isDelay, setIsDelay] = useState(false);
 
-  const inputChangeHandler = (event: ChangeEvent<HTMLInputElement>) => {
-    setInputValue(event.target.value.replace(/[^a-zA-Z,]+/, ''));
-  }
+  const fetchImageHandler: FetchImageHandler = useCallback(
+    async (APIKey, tags) => {
+      let imageDataArr =
+        (await Promise.all(
+          tags.map((tag) =>
+            fetch(`https://api.giphy.com/v1/gifs/random?api_key=${APIKey}&tag=${tag}`)
+          )
+        )
+          .then((responces) => Promise.all(responces.map((v) => v.json())))
+          .then((result) => result)
+          .catch((result) => {
+            setModalMessage(`Ошибка запроса: ${result.message}`);
+          })
+          .finally(() => setIsLoading(false))) || [];
 
-  const fetchImageHandler = async (APIKey: string, tags: string[]) => {
-    let imageDataArr = await Promise.all(tags.map(tag => fetch(`https://api.giphy.com/v1/gifs/random?api_key=${APIKey}&tag=${tag}`)))
-      .then(responses => Promise.all(responses.map(r => r.json())))
-      .catch(errors => setModalMessage(errors))
-      .finally(() => {
-        setIsLoading(false)
-      }) || [];
+      if (imageDataArr.length === 0) {
+        return;
+      }
 
-    if (imageDataArr[0].message) {
-      setModalMessage(imageDataArr[0].message);
-      return
+      if (imageDataArr.filter((item) => item.data.length === 0).length) {
+        setModalMessage('По тегу ничего не найдено');
+      }
+
+      imageDataArr = imageDataArr.map((imageData, idx) => ({
+        id: imageData.data.id,
+        imageUrl: imageData.data.image_url,
+        tag: tags[idx],
+      }));
+
+      const imageCards = imageDataArr.filter((item) => item.id);
+
+      if (imageCards.length !== 0) {
+        onSetImageCards(imageCards);
+      }
+    },
+    [onSetImageCards]
+  );
+
+  const makeTag = useCallback(() => {
+    let text = '';
+    const possible = 'abcdefghijklmnopqrstuvwxyz';
+
+    for (let i = 0; i <= Math.ceil(10 * Math.random()); i++)
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+
+    return [text];
+  }, []);
+
+  useEffect(() => {
+    if (!isDelay) {
+      return;
     }
 
-    if (imageDataArr.filter(item => item.data.length === 0).length) {
-      setModalMessage("По тегу ничего не найдено")
+    const getRandomImage = () => {
+      const tag = makeTag();
+      fetchImageHandler!('uqBOOTxG04QDOhkJ7zA7vePHJMjk7dP7', tag);
+    };
+
+    const id = setInterval(getRandomImage, 5000);
+    return () => clearInterval(id);
+  }, [makeTag, isDelay, fetchImageHandler]);
+
+  useEffect(() => {
+    setInputValue((prev) => (prev ? `${prev},${tag}` : tag));
+  }, [tag]);
+
+  const inputChangeHandler = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setInputValue(() => event.target.value.replace(/[^a-zA-Z,]+/, ''));
+
+    if (event.target.value.replace(/[^a-zA-Z,]+/, '').toLocaleLowerCase() !== 'delay') {
+      setIsDelay(false);
     }
+  }, []);
 
-    imageDataArr = imageDataArr.filter(item => item.data.length !== 0)
+  const submitSearchHandler = useCallback(
+    (event: FormEvent<HTMLDivElement>) => {
+      event.preventDefault();
 
-    if (imageDataArr.length === 0) {
-      return
-    }
+      if (!inputValue) {
+        setModalMessage(() => "Заполните поле 'тег'");
+        return;
+      }
 
-    // Неверное присвоение tag: tags[idx]
-    const imageCards = imageDataArr.map((imageData, idx) => ({ id: imageData.data.id, imageUrl: imageData.data.image_url, tag: tags[idx] }))
+      if (inputValue.toLocaleLowerCase() === 'delay') {
+        setModalMessage(() => 'Автозагрузка рандомных тэгов влючена');
+        setIsDelay(true);
+        return;
+      }
 
-    onSetImageCards(imageCards)
-  }
+      setIsLoading(() => true);
+      fetchImageHandler(
+        'uqBOOTxG04QDOhkJ7zA7vePHJMjk7dP7',
+        inputValue.toLowerCase().split(/[^a-zA-Z]+/)
+      );
+      setInputValue(() => '');
+    },
+    [fetchImageHandler, inputValue]
+  );
 
-  const submitSearchHandler = (event: FormEvent<HTMLDivElement>) => {
-    event.preventDefault();
+  const closeHandler: CloseHandler = useCallback(() => {
+    setModalMessage(() => '');
+  }, []);
 
-    if (!inputValue) {
-      setModalMessage("Заполните поле 'тег'")
-      return
-    } 
-
-    setIsLoading(true);
-    fetchImageHandler('uqBOOTxG04QDOhkJ7zA7vePHJMjk7dP7', inputValue.split(/[^a-zA-Z]+/));
-    setInputValue('');
-  }
-
-  const closeHandler: CloseHandler = (event) => {
-    const target = (event.target as HTMLDivElement);
-    
-    if (target.classList.contains('modal')) {
-      target.classList.toggle('d-none')
-    }
-
-    if (target.classList.contains('close')) {
-      target.closest('.modal')!.classList.toggle('d-none')
-    }
-
-    target.closest('.modal')!.nextElementSibling!.classList.toggle('d-none')
-  }
-
-  const clearHandler = () => {
+  const clearHandler = useCallback(() => {
     onClearImageCards();
-    setInputValue('');
-  }
+    setInputValue(() => '');
+  }, [onClearImageCards]);
 
   return (
     <>
-    <div className="searching" onSubmit={event => submitSearchHandler(event)}>
-      <form className="searching__form pt-3 d-flex justify-content-around">
-        <input type="text" className="form-control form-control-md" placeholder="Введите тэг" value={inputValue} onChange={event => inputChangeHandler(event)} />
-        {
-          isLoading 
-            ? <button type="submit" className="btn btn-success" disabled>Загрузка...</button>
-            : <button type="submit" className="btn btn-success">Загрузить</button>
-        }
-          <button type="button" className="btn btn-primary" onClick={clearHandler}>Очистить</button>
-        <button type="button" className="btn btn-danger">Группировать</button>
-      </form>
-    </div>
+      <div className="searching mb-4" onSubmit={(event) => submitSearchHandler(event)}>
+        <form className="searching__form pt-3 d-flex justify-content-around">
+          <input
+            type="text"
+            className="form-control form-control-md"
+            placeholder="Введите тэг"
+            value={inputValue}
+            onChange={(event) => inputChangeHandler(event)}
+          />
+          <button type="submit" className="btn btn-success" disabled={isLoading}>
+            {isLoading ? 'Загрузка...' : 'Загрузить'}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={clearHandler}>
+            Очистить
+          </button>
+          <button type="button" className="btn btn-danger" onClick={onSetIsGroup}>
+            {isGrouped ? 'Разгруппировать' : 'Группировать'}
+          </button>
+        </form>
+      </div>
 
-    {/*  */}
-    {
-        modalMessage && <Modal message={modalMessage} onClose={closeHandler} />
-    }
+      {modalMessage && (
+        <Modal>
+          <div className="modal d-block">
+            <div className="modal-dialog">
+              <div className="modal-content">
+                <div className="modal-body">
+                  <h5>{modalMessage}</h5>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" onClick={closeHandler} className="btn btn-primary close">
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="modal-backdrop" onClick={closeHandler} style={{ opacity: 0.7 }}></div>
+        </Modal>
+      )}
     </>
-  )
-}
+  );
+};
